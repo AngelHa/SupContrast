@@ -8,7 +8,7 @@ import math
 import torch
 import torch.backends.cudnn as cudnn
 
-from main_ce import set_loader
+# from main_ce import set_loader
 from util import AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate, accuracy
 from util import set_optimizer
@@ -50,9 +50,15 @@ def parse_option():
     # model dataset
     parser.add_argument('--model', type=str, default='resnet50')
     parser.add_argument('--dataset', type=str, default='cifar10',
-                        choices=['cifar10', 'cifar100'], help='dataset')
+                        choices=['cifar10', 'cifar100', 'path'], help='dataset')
+    parser.add_argument('--mean', type=str, help='mean of dataset in path in form of str tuple')
+    parser.add_argument('--std', type=str, help='std of dataset in path in form of str tuple')
+    parser.add_argument('--data_folder', type=str, default=None, help='path to custom dataset')
+    parser.add_argument('--size', type=int, default=32, help='parameter for RandomResizedCrop')
+
 
     # other setting
+    parser.add_argument('--freeze_cnn', action='store_true', help='freeze the cnn and train the linear')
     parser.add_argument('--cosine', action='store_true',
                         help='using cosine annealing')
     parser.add_argument('--warm', action='store_true',
@@ -63,8 +69,17 @@ def parse_option():
 
     opt = parser.parse_args()
 
+    # check if dataset is path that passed required arguments
+    if opt.dataset == 'path':
+        assert opt.data_folder is not None \
+            and opt.mean is not None \
+            and opt.std is not None
+
     # set the path according to the environment
-    opt.data_folder = './datasets/'
+    if opt.data_folder is None:
+        opt.data_folder = './datasets/'
+    opt.model_path = './save/Linear/{}_models'.format(opt.dataset)
+    opt.tb_path = './save/Linear/{}_tensorboard'.format(opt.dataset)
 
     iterations = opt.lr_decay_epochs.split(',')
     opt.lr_decay_epochs = list([])
@@ -94,16 +109,80 @@ def parse_option():
         opt.n_cls = 10
     elif opt.dataset == 'cifar100':
         opt.n_cls = 100
+    elif opt.dataset == 'path':
+        opt.n_cls = 5
     else:
         raise ValueError('dataset not supported: {}'.format(opt.dataset))
 
     return opt
 
+def set_loader(opt):
+    # construct data loader
+    if opt.dataset == 'cifar10':
+        mean = (0.4914, 0.4822, 0.4465)
+        std = (0.2023, 0.1994, 0.2010)
+    elif opt.dataset == 'cifar100':
+        mean = (0.5071, 0.4867, 0.4408)
+        std = (0.2675, 0.2565, 0.2761)
+    elif opt.dataset == 'path':
+        mean = eval(opt.mean)
+        std = eval(opt.mean)
+    else:
+        raise ValueError('dataset not supported: {}'.format(opt.dataset))
+    normalize = transforms.Normalize(mean=mean, std=std)
+
+
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(size=opt.size, scale=(0.2, 1.)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomVerticalFlip(),
+        transforms.ToTensor(),
+        normalize,
+    ])
+
+    val_transform = transforms.Compose([
+        transforms.ToTensor(),
+        normalize,
+    ])
+
+    if opt.dataset == 'cifar10':
+        train_dataset = datasets.CIFAR10(root=opt.data_folder,
+                                         transform=train_transform,
+                                         download=True)
+        val_dataset = datasets.CIFAR10(root=opt.data_folder,
+                                       train=False,
+                                       transform=val_transform)
+    elif opt.dataset == 'cifar100':
+        train_dataset = datasets.CIFAR100(root=opt.data_folder,
+                                          transform=train_transform,
+                                          download=True)
+        val_dataset = datasets.CIFAR100(root=opt.data_folder,
+                                        train=False,
+                                        transform=val_transform)
+    elif opt.dataset == 'path':
+        train_dataset = datasets.ImageFolder(root=opt.data_folder+'/train',
+                                            transform=train_transform)
+        val_dataset = datasets.ImageFolder(root=opt.data_folder+'/val',
+                                            transform=val_transform)
+    else:
+        raise ValueError(opt.dataset)
+
+    train_sampler = None
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=opt.batch_size, shuffle=(train_sampler is None),
+        num_workers=opt.num_workers, pin_memory=True, sampler=train_sampler)
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=opt.batch_size, shuffle=False,
+        num_workers=opt.num_workers, pin_memory=True)
+
+    return train_loader, val_loader
+
+    return train_loader, 
 
 def set_model(opt):
     model = SupConResNet(name=opt.model)
     criterion = torch.nn.CrossEntropyLoss()
-
+    
     classifier = LinearClassifier(name=opt.model, num_classes=opt.n_cls)
 
     ckpt = torch.load(opt.ckpt, map_location='cpu')
@@ -124,7 +203,8 @@ def set_model(opt):
         cudnn.benchmark = True
 
         model.load_state_dict(state_dict)
-
+    if opt.freeze_cnn:
+        pass
     return model, classifier, criterion
 
 

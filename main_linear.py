@@ -7,6 +7,7 @@ import math
 
 import torch
 import torch.backends.cudnn as cudnn
+from torchvision import transforms, datasets
 
 # from main_ce import set_loader
 from util import AverageMeter
@@ -134,6 +135,7 @@ def set_loader(opt):
 
     train_transform = transforms.Compose([
         transforms.RandomResizedCrop(size=opt.size, scale=(0.2, 1.)),
+        transforms.RandomRotation(degrees=30),
         transforms.RandomHorizontalFlip(),
         transforms.RandomVerticalFlip(),
         transforms.ToTensor(),
@@ -141,6 +143,7 @@ def set_loader(opt):
     ])
 
     val_transform = transforms.Compose([
+        transforms.Resize(size=opt.size),
         transforms.ToTensor(),
         normalize,
     ])
@@ -162,7 +165,7 @@ def set_loader(opt):
     elif opt.dataset == 'path':
         train_dataset = datasets.ImageFolder(root=opt.data_folder+'/train',
                                             transform=train_transform)
-        val_dataset = datasets.ImageFolder(root=opt.data_folder+'/val',
+        val_dataset = datasets.ImageFolder(root=opt.data_folder+'/test',
                                             transform=val_transform)
     else:
         raise ValueError(opt.dataset)
@@ -203,8 +206,10 @@ def set_model(opt):
         cudnn.benchmark = True
 
         model.load_state_dict(state_dict)
-    if opt.freeze_cnn:
-        pass
+    # if opt.freeze_cnn:
+    #     for param in model.encoder.features.parameters():
+    #         param.requires_grad = False
+        
     return model, classifier, criterion
 
 

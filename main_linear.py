@@ -10,9 +10,10 @@ import torch.backends.cudnn as cudnn
 from torchvision import transforms, datasets
 
 # from main_ce import set_loader
+import tensorboard_logger as tb_logger
 from util import AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate, accuracy
-from util import set_optimizer
+from util import set_optimizer, save_model
 from networks.resnet_big import SupConResNet, LinearClassifier
 
 try:
@@ -114,6 +115,15 @@ def parse_option():
         opt.n_cls = 5
     else:
         raise ValueError('dataset not supported: {}'.format(opt.dataset))
+    
+
+    opt.tb_folder = os.path.join(opt.tb_path, opt.model_name)
+    if not os.path.isdir(opt.tb_folder):
+        os.makedirs(opt.tb_folder)
+        
+    opt.save_folder = os.path.join(opt.model_path, opt.model_name)
+    if not os.path.isdir(opt.save_folder):
+        os.makedirs(opt.save_folder)
 
     return opt
 
@@ -322,6 +332,9 @@ def main():
     # build optimizer
     optimizer = set_optimizer(opt, classifier)
 
+    # tensorboard
+    logger = tb_logger.Logger(logdir=opt.tb_folder, flush_secs=2)
+    
     # training routine
     for epoch in range(1, opt.epochs + 1):
         adjust_learning_rate(opt, optimizer, epoch)
@@ -338,6 +351,15 @@ def main():
         loss, val_acc = validate(val_loader, model, classifier, criterion, opt)
         if val_acc > best_acc:
             best_acc = val_acc
+        
+        # tensorboard logger
+        logger.log_value('loss', loss, epoch)
+        logger.log_value('learning_rate', optimizer.param_groups[0]['lr'], epoch)
+        
+        if epoch % opt.save_freq == 0:
+            save_file = os.path.join(
+                opt.save_folder, 'ckpt_epoch_{epoch}.pth'.format(epoch=epoch))
+            save_model(model, optimizer, opt, epoch, save_file, classifier)
 
     print('best accuracy: {:.2f}'.format(best_acc))
 

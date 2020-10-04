@@ -107,7 +107,7 @@ def set_loader(opt):
     normalize = transforms.Normalize(mean=mean, std=std)
 
 
-    val_transform = transforms.Compose([
+    data_transform = transforms.Compose([
         transforms.Resize(size=opt.size),
         transforms.ToTensor(),
         normalize,
@@ -116,14 +116,14 @@ def set_loader(opt):
     if opt.dataset == 'cifar10':
         dataset = datasets.CIFAR10(root=opt.data_folder,
                                        train=False,
-                                       transform=val_transform)
+                                       transform=data_transform)
     elif opt.dataset == 'cifar100':
         dataset = datasets.CIFAR100(root=opt.data_folder,
                                         train=False,
-                                        transform=val_transform)
+                                        transform=data_transform)
     elif opt.dataset == 'path':
         dataset = datasets.ImageFolder(root=opt.data_folder,
-                                            transform=val_transform)
+                                            transform=data_transform)
     else:
         raise ValueError(opt.dataset)
 
@@ -190,7 +190,7 @@ def main():
     model, classifier, criterion = set_model(opt)
     
     # predict routine
-    outputs = validate(val_loader, model, classifier, criterion, opt)
+    outputs = validate(data_loader, model, classifier, criterion, opt)
     
     df = pd.DataFrame.from_records(outputs)
     df['file'] = data_loader.samples

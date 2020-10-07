@@ -1,14 +1,18 @@
 from __future__ import print_function
 
 import sys
+import os
 import argparse
 import time
 import math
+import numpy as np
 import pandas as pd
 
 import torch
 import torch.backends.cudnn as cudnn
 from torchvision import transforms, datasets
+
+from torchvision.datasets import ImageFolder
 
 from tqdm import tqdm
 # from main_ce import set_loader
@@ -56,6 +60,10 @@ def parse_option():
 
     parser.add_argument('--ckpt', type=str, default='',
                         help='path to pre-trained model')
+    parser.add_argument('--get_confidence', action='store_true',
+                        help='get confidence in the output file')
+    parser.add_argument('--get_probabilities', action='store_true',
+                        help='get probabilities in the output file')
 
     opt = parser.parse_args()
 
@@ -68,13 +76,6 @@ def parse_option():
     # set the path according to the environment
     if opt.data_folder is None:
         opt.data_folder = './datasets/'
-        
-    opt.model_name = '{}_{}_lr_{}_decay_{}_bsz_{}'.\
-        format(opt.dataset, opt.model, opt.learning_rate, opt.weight_decay,
-               opt.batch_size)
-
-    if opt.cosine:
-        opt.model_name = '{}_cosine'.format(opt.model_name)
 
     if opt.dataset == 'cifar10':
         opt.n_cls = 10
@@ -84,10 +85,6 @@ def parse_option():
         opt.n_cls = 5
     else:
         raise ValueError('dataset not supported: {}'.format(opt.dataset))
-
-    opt.save_folder = os.path.join(opt.model_path, opt.model_name)
-    if not os.path.isdir(opt.save_folder):
-        os.makedirs(opt.save_folder)
 
     return opt
 
@@ -156,7 +153,7 @@ def set_model(opt):
         cudnn.benchmark = True
 
         model.load_state_dict(state_dict)
-        classifier.load_state_dict(ckpt['classifier'])
+        classifier.load_state_dict(ckpt['classifier'].state_dict())
         
     return model, classifier
 
@@ -170,7 +167,6 @@ def predict(data_loader, model, classifier, opt):
         end = time.time()
         for idx, (images, _) in tqdm(enumerate(data_loader)):
             images = images.float().cuda()
-            bsz = labels.shape[0]
 
             # forward
             output = classifier(model.encoder(images))
@@ -186,16 +182,32 @@ def main():
     # build data loader
     data_loader = set_loader(opt)
 
-    # build model and criterion
-    model, classifier, criterion = set_model(opt)
+    # build model and classifier
+    model, classifier = set_model(opt)
     
     # predict routine
-    outputs = validate(data_loader, model, classifier, criterion, opt)
+    outputs = predict(data_loader, model, classifier, opt)
     
-    df = pd.DataFrame.from_records(outputs)
-    df['file'] = data_loader.samples
+    outputs = torch.nn.functional.softmax(outputs, dim=1)
+    values, labels = outputs.max(dim=1)
     
-    df.to_csv(opt.output)
+    classes = np.array(['chip', 'fines', 'lump', 'mixed', 'pellets'])
+    # classe_to_idx = {'chip': 0, 'fines': 1, 'lump': 2, 'mixed': 3, 'pellets': 4}
+    files  = [path.split('/')[-1] for path,_ in data_loader.dataset.samples]
+
+    df = pd.DataFrame.from_dict({
+        'files': files,
+        'labels': classes[labels],
+    })
+
+    if opt.get_confidence:
+        df['confidence'] = values.numpy()
+    
+    if opt.get_probabilities:
+        df[classes] = outputs.numpy()
+        
+    
+    df.to_csv(opt.output, index=None)
 
 
 if __name__ == '__main__':
